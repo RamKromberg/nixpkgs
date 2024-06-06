@@ -1,4 +1,4 @@
-{ mkDerivation
+{ stdenv
 , lib
 , fetchFromGitHub
 , cmake
@@ -6,6 +6,8 @@
 , qtbase
 , qtsvg
 , qttools
+, qtwayland
+, wrapQtAppsHook
 , perl
 
   # Cantata doesn't build with cdparanoia enabled so we disable that
@@ -20,10 +22,11 @@
 , libmusicbrainz5
 
 , withTaglib ? true
-, taglib
+, taglib2
 , taglib_extras
 , withHttpStream ? true
 , qtmultimedia
+, gst_all_1
 , withReplaygain ? true
 , ffmpeg
 , speex
@@ -35,7 +38,7 @@
 , udisks2
 , withDynamic ? true
 , withHttpServer ? true
-, withLibVlc ? false
+, withLibVlc ? true
 , libvlc
 , withStreams ? true
 }:
@@ -56,6 +59,8 @@ let
 
   withUdisks = (withTaglib && withDevices);
 
+  gst = with gst_all_1; [ gstreamer gst-libav gst-plugins-base gst-plugins-good gst-plugins-bad ];
+
   options = [
     { names = [ "CDDB" ]; enable = withCddb; pkgs = [ libcddb ]; }
     { names = [ "CDPARANOIA" ]; enable = withCdda; pkgs = [ cdparanoia ]; }
@@ -71,20 +76,20 @@ let
     { names = [ "MUSICBRAINZ" ]; enable = withMusicbrainz; pkgs = [ libmusicbrainz5 ]; }
     { names = [ "ONLINE_SERVICES" ]; enable = withOnlineServices; pkgs = [ ]; }
     { names = [ "STREAMS" ]; enable = withStreams; pkgs = [ ]; }
-    { names = [ "TAGLIB" "TAGLIB_EXTRAS" ]; enable = withTaglib; pkgs = [ taglib taglib_extras ]; }
+    { names = [ "TAGLIB" "TAGLIB_EXTRAS" ]; enable = withTaglib; pkgs = [ taglib2 taglib_extras ]; }
     { names = [ "UDISKS2" ]; enable = withUdisks; pkgs = [ udisks2 ]; }
   ];
 
 in
-mkDerivation rec {
+stdenv.mkDerivation rec {
   pname = "cantata";
-  version = "2.5.0";
+  version = "3.2.1";
 
   src = fetchFromGitHub {
-    owner = "CDrummond";
+    owner = "nullobsi";
     repo = "cantata";
     rev = "v${version}";
-    sha256 = "sha256-UaZEKZvCA50WsdQSSJQQ11KTK6rM4ouCHDX7pn3NlQw=";
+    sha256 = "sha256-H7+IuT9hDfFkHLLzlTzHy1XSPUmREQ88DEiJPWgxerw=";
   };
 
   patches = [
@@ -92,6 +97,8 @@ mkDerivation rec {
     # patchShebangs the playlists scripts, making that unnecessary (perl will
     # always be available because it's a dependency)
     ./dont-check-for-perl-in-PATH.diff
+    # libvlc fix in 3.5.1
+    ./cantata_3_5_1_libvlc.patch
   ];
 
   postPatch = ''
@@ -101,13 +108,18 @@ mkDerivation rec {
   buildInputs = [
     qtbase
     qtsvg
+    qtwayland
     (perl.withPackages (ppkgs: with ppkgs; [ URI ]))
   ]
   ++ lib.flatten (builtins.catAttrs "pkgs" (builtins.filter (e: e.enable) options));
 
-  nativeBuildInputs = [ cmake pkg-config qttools ];
+  nativeBuildInputs = [ cmake pkg-config qttools wrapQtAppsHook ];
 
   cmakeFlags = lib.flatten (map (e: map (f: fstat e.enable f) e.names) options);
+
+  qtWrapperArgs = lib.optionals (withHttpStream && !withLibVlc) [
+    "--prefix GST_PLUGIN_PATH : ${lib.makeSearchPathOutput "lib" "lib/gstreamer-1.0" gst}"
+  ];
 
   meta = with lib; {
     description = "Graphical client for MPD";
@@ -115,7 +127,7 @@ mkDerivation rec {
     homepage = "https://github.com/cdrummond/cantata";
     license = licenses.gpl3Only;
     maintainers = with maintainers; [ peterhoeg ];
-    # Technically, Cantata should run on Darwin/Windows so if someone wants to
+    # Technically, Cantata runs on Darwin/Windows so if someone wants to
     # bother figuring that one out, be my guest.
     platforms = platforms.linux;
   };
